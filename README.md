@@ -1,18 +1,16 @@
 # clipaste
 
-Fix macOS screenshot paste in terminal AI tools.
+Fix screenshot paste in terminal AI tools — locally and over SSH.
 
-**Problem:** You take a screenshot, switch to Claude Code / Codex / Cursor in your terminal, press **Cmd+V** — nothing happens. But if you copy the same image from another app first, it works fine.
+**Problem:** You take a screenshot, switch to Claude Code / Codex / Cursor in your terminal, press **Ctrl+V** — nothing happens. Or you're SSH'd into a remote server and can't paste screenshots at all.
 
-**Why:** macOS screenshots only put raw image data (TIFF/PNG) on the clipboard. Terminals like Ghostty and Alacritty can only Cmd+V paste text or file URLs — they can't paste raw image data. Additionally, tools like Claude Code check for the legacy `«class PNGf»` pasteboard type, which screenshots don't provide.
+**Why:** macOS screenshots only put raw image data (TIFF/PNG) on the clipboard. Terminals like Ghostty and Alacritty can only Cmd+V paste text or file URLs — they can't paste raw image data. Over SSH, the remote server has no access to your local clipboard whatsoever.
 
-**Solution:** clipaste is a tiny background daemon (~18 MB RAM, 0% CPU) that watches your clipboard. When it detects a screenshot (image data without a file URL), it:
+**Solution:** clipaste is a tiny background daemon (9 MB RAM, 0% CPU) that:
 
-1. Saves the image as a temp PNG file
-2. Registers the file path on the clipboard (so **Cmd+V** pastes the path)
-3. Adds the legacy PNGf type (so **Ctrl+V** image paste also works)
+1. **Local paste:** Saves screenshots as temp PNG files and registers the file path on the clipboard, so **Cmd+V** works in terminals. Also adds the legacy PNGf type so **Ctrl+V** image paste works too.
 
-Your workflow becomes: **Screenshot → Cmd+V → Done.**
+2. **SSH remote paste:** Runs an HTTP server on `localhost:18340`. Use `clipaste ssh-setup` to configure a remote server — it installs an xclip shim and SSH tunnel so **Ctrl+V** in remote Claude Code fetches the image from your local machine.
 
 ## Install
 
@@ -29,61 +27,78 @@ brew services start clipaste
 irm https://raw.githubusercontent.com/hqhq1025/clipaste/main/install.ps1 | iex
 ```
 
-This downloads the latest release, installs to `%LOCALAPPDATA%\clipaste\`, adds to PATH, and sets auto-start via Registry. No admin required.
-
 ### Build from source
-
-Requires Rust toolchain.
 
 ```bash
 git clone https://github.com/hqhq1025/clipaste.git
 cd clipaste
 cargo build --release
-# Binary at target/release/clipaste (or clipaste.exe on Windows)
 ```
 
-That's it. clipaste runs in the background and starts automatically on login.
+## SSH Remote Paste
 
-## How it works
+clipaste can bridge your local clipboard to remote servers over SSH. One-time setup:
+
+```bash
+clipaste ssh-setup user@your-server
+```
+
+This automatically:
+- Installs an xclip shim on the remote server (`~/.local/bin/xclip`)
+- Adds `RemoteForward 18340` to your `~/.ssh/config`
+- No extra tools needed on the remote server (just `curl`)
+
+After setup, open a **new** SSH session and use **Ctrl+V** in Claude Code / Codex:
+
+```bash
+ssh user@your-server
+claude   # Ctrl+V pastes screenshots from your local Mac
+```
+
+### How SSH paste works
 
 ```
-┌─────────────┐    ┌──────────┐    ┌──────────────────────────┐
-│  Screenshot  │───▶│ Clipboard│───▶│ clipaste detects image   │
-│  Cmd+Shift+4 │    │ (TIFF)   │    │ without file URL         │
-└─────────────┘    └──────────┘    └────────────┬─────────────┘
-                                                 │
-                                                 ▼
-                                   ┌──────────────────────────┐
-                                   │ Save temp PNG + register │
-                                   │ file URL on clipboard    │
-                                   └────────────┬─────────────┘
-                                                 │
-                        ┌────────────────────────┼──────────────────────┐
-                        ▼                        ▼                      ▼
-               ┌──────────────┐        ┌──────────────┐       ┌──────────────┐
-               │   Cmd+V      │        │   Ctrl+V     │       │  Other apps  │
-               │ pastes path  │        │ pastes image │       │ paste image  │
-               │ (terminals)  │        │ (AI tools)   │       │  (normal)    │
-               └──────────────┘        └──────────────┘       └──────────────┘
+Local Mac                          Remote Server (via SSH)
+─────────                          ──────────────────────
+Screenshot                         Claude Code runs "xclip"
+    │                                      │
+    ▼                                      ▼
+clipaste saves PNG              xclip shim intercepts call
+    │                                      │
+    ▼                                      ▼
+HTTP server ◄──── SSH RemoteForward ────► curl localhost:18340
+(:18340)           (tunnel)                    │
+    │                                          ▼
+    └──── serves PNG ─────────────────► Image delivered ✅
 ```
+
+## Paste shortcuts
+
+| Scenario | Shortcut | How it works |
+|----------|----------|-------------|
+| **Local terminal** | **Cmd+V** | Ghostty/iTerm2 paste file path → tool reads file |
+| **Local terminal** | **Ctrl+V** | Claude Code reads clipboard image directly |
+| **SSH remote** | **Ctrl+V** | Claude Code → xclip shim → HTTP tunnel → local PNG |
+
+**Tip:** Ctrl+V works everywhere (local + remote). Cmd+V is a local-only bonus.
 
 ## Compatibility
 
-| Terminal | macOS Cmd+V | macOS Ctrl+V | Windows Ctrl+V |
-|----------|:-----------:|:------------:|:--------------:|
-| Ghostty  | ✅          | ✅           | —              |
-| Alacritty| ✅          | ✅           | —              |
-| iTerm2   | ✅          | ✅           | —              |
-| Terminal.app | ✅       | ✅           | —              |
-| WezTerm  | ✅          | ✅           | ✅             |
-| Kitty    | ✅          | ✅           | ✅             |
-| Windows Terminal | —   | —            | ✅             |
+| Terminal | macOS Cmd+V | macOS Ctrl+V | Windows Ctrl+V | SSH Ctrl+V |
+|----------|:-----------:|:------------:|:--------------:|:----------:|
+| Ghostty  | ✅          | ✅           | —              | ✅         |
+| Alacritty| ✅          | ✅           | —              | ✅         |
+| iTerm2   | ✅          | ✅           | —              | ✅         |
+| Terminal.app | ✅       | ✅           | —              | ✅         |
+| WezTerm  | ✅          | ✅           | ✅             | ✅         |
+| Kitty    | ✅          | ✅           | ✅             | ✅         |
+| Windows Terminal | —   | —            | ✅             | —          |
 
-| AI Tool | Status |
-|---------|:------:|
-| Claude Code | ✅ |
-| Codex CLI   | ✅ |
-| Cursor CLI  | ✅ |
+| AI Tool | Local | SSH Remote |
+|---------|:-----:|:----------:|
+| Claude Code | ✅ | ✅ |
+| Codex CLI   | ✅ | ✅ |
+| Cursor CLI  | ✅ | ✅ |
 
 ## Managing
 
@@ -98,19 +113,14 @@ brew services stop clipaste      # stop
 ### Windows
 
 ```powershell
-# Stop
-taskkill /IM clipaste.exe /F
-
-# Disable auto-start
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "clipaste"
-
-# Uninstall
-Remove-Item -Recurse "$env:LOCALAPPDATA\clipaste"
+taskkill /IM clipaste.exe /F                      # stop
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "clipaste"  # disable auto-start
 ```
 
 ## How is this different from...
 
-- **[shotpath](https://hboon.com/shotpath-automatically-copy-macos-screenshot-paths/)** — Monitors screenshot *files* on disk. clipaste works with clipboard screenshots (no file saved).
+- **[cc-clip](https://github.com/ShunmeiCho/cc-clip)** — SSH clipboard bridge only. clipaste handles both local paste fix AND SSH bridge in one tool, with no dependencies on the remote server (just `curl`).
+- **[shotpath](https://hboon.com/shotpath-automatically-copy-macos-screenshot-paths/)** — Monitors screenshot *files* on disk. clipaste works with clipboard screenshots (no file saved to Desktop).
 - **[impaste](https://til.simonwillison.net/macos/impaste)** — A pipe-based tool (`impaste | pbcopy`). clipaste is fully automatic, no manual step needed.
 - **[pngpaste](https://github.com/jcsalterego/pngpaste)** — Extracts clipboard images to files. clipaste does the reverse: it makes clipboard images available *as* files for terminals.
 
@@ -118,11 +128,17 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\clipaste"
 
 This fixes a long-standing pain point across multiple projects:
 
+**Local paste (macOS/Windows):**
 - [anthropics/claude-code#2102](https://github.com/anthropics/claude-code/issues/2102) — Clipboard Image Parsing Failure on macOS
 - [anthropics/claude-code#17042](https://github.com/anthropics/claude-code/issues/17042) — Ctrl+V clipboard paste fails on macOS
 - [anthropics/claude-code#26901](https://github.com/anthropics/claude-code/issues/26901) — Image paste from clipboard no longer works
 - [openai/codex#6080](https://github.com/openai/codex/issues/6080) — Image pasting issue
 - [ghostty-org/ghostty#10478](https://github.com/ghostty-org/ghostty/discussions/10478) — Support pasting screenshot images
+
+**SSH remote paste:**
+- [anthropics/claude-code#5277](https://github.com/anthropics/claude-code/issues/5277) — Image paste in SSH/SFTP
+- [anthropics/claude-code#13738](https://github.com/anthropics/claude-code/issues/13738) — Clipboard image paste not working in WSL
+- [anthropics/claude-code#8324](https://github.com/anthropics/claude-code/issues/8324) — Can't paste image from clipboard on Linux
 
 ## Community
 
