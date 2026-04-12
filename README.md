@@ -2,6 +2,8 @@
 
 Fix screenshot paste in terminal AI tools — locally, over SSH, and in WSL2.
 
+**clipaste** is a lightweight clipboard daemon for developers who use terminal-based AI coding tools like Claude Code, Codex CLI, and Cursor. Install with one command via Homebrew (macOS) or PowerShell (Windows), and screenshot paste just works — in Ghostty, Alacritty, iTerm2, Kitty, WezTerm, and more. It also bridges your clipboard to remote servers over SSH and to WSL2 environments. Written in Rust, clipaste uses only 9 MB of RAM with 0% CPU overhead.
+
 **Problem:** You take a screenshot, switch to Claude Code / Codex / Cursor in your terminal, press **Ctrl+V** — nothing happens. Or you're SSH'd into a remote server and can't paste screenshots at all.
 
 **Why:** macOS screenshots only put raw image data (TIFF/PNG) on the clipboard. Terminals like Ghostty and Alacritty can only Cmd+V paste text or file URLs — they can't paste raw image data. Over SSH, the remote server has no access to your local clipboard whatsoever.
@@ -144,6 +146,32 @@ brew services stop clipaste      # stop
 taskkill /IM clipaste.exe /F                      # stop
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "clipaste"  # disable auto-start
 ```
+
+## FAQ
+
+### How do I paste screenshots in Claude Code?
+
+Install clipaste with `brew install hqhq1025/clipaste/clipaste && brew services start clipaste` on macOS, or the PowerShell one-liner on Windows. Once running, take a screenshot and press **Ctrl+V** in Claude Code — the image pastes automatically. No configuration needed. clipaste runs as a background daemon and handles the clipboard conversion for you.
+
+### Why can't I paste images in my terminal on macOS?
+
+macOS screenshots place raw TIFF/PNG image data on the clipboard, but terminals like Ghostty and Alacritty can only paste text or file paths. clipaste fixes this by intercepting clipboard changes, saving the image as a temp PNG file, and putting the file path back on the clipboard so your terminal can paste it.
+
+### How do I paste clipboard images over SSH?
+
+Run `clipaste ssh-setup user@your-server` once on your local machine. This installs a lightweight xclip shim on the remote server and configures an SSH tunnel. After setup, open a new SSH session and press **Ctrl+V** in Claude Code or Codex — the image is fetched from your local machine through the tunnel automatically.
+
+### Does clipaste work with WSL2?
+
+Yes. Run `clipaste wsl-setup` inside your WSL2 environment. This installs an xclip shim that connects directly to clipaste.exe on the Windows host — no SSH tunnel needed. After setup, **Ctrl+V** in Claude Code or Codex inside WSL2 fetches screenshots from the Windows clipboard.
+
+### How much memory and CPU does clipaste use?
+
+clipaste uses approximately 9 MB of RAM and 0% CPU when idle. It is written in Rust and runs as a tiny background daemon. On macOS it is managed via `brew services`; on Windows it auto-starts via a Registry Run key. It has no runtime dependencies beyond the OS clipboard APIs.
+
+### Which terminals and AI tools does clipaste support?
+
+clipaste works with Ghostty, Alacritty, iTerm2, Terminal.app, WezTerm, Kitty, and Windows Terminal. It supports Claude Code, Codex CLI, and Cursor CLI. Both **Cmd+V** (macOS local) and **Ctrl+V** (all platforms including SSH and WSL2) are supported. See the compatibility tables above for the full matrix.
 
 ## How is this different from...
 
