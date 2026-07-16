@@ -6,13 +6,22 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-pub const VERSION: &str = "2.3.0";
+pub const VERSION: &str = "2.3.0+falconiere-dir";
 pub const DEFAULT_PORT: u16 = 18340;
 
 /// Shared state: path to the most recently saved screenshot PNG
 pub type LatestImage = Arc<Mutex<Option<PathBuf>>>;
 
 pub fn temp_dir() -> PathBuf {
+    // CLIPASTE_DIR overrides the cache location and is used VERBATIM — no
+    // "clipaste" component appended — so it can point straight at a shared or
+    // synced folder. See also the shot-*.png guard in clean_old_temp_files().
+    if let Some(dir) = std::env::var_os("CLIPASTE_DIR") {
+        let p = PathBuf::from(dir);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
     cache_root().join("clipaste")
 }
 
@@ -106,9 +115,20 @@ pub fn clean_old_temp_files() {
     };
     let cutoff = SystemTime::now() - Duration::from_secs(3600);
     for entry in entries.flatten() {
+        // Only ever delete files we wrote ourselves. CLIPASTE_DIR may point at a
+        // shared folder, where upstream's "remove every entry older than an hour"
+        // destroys unrelated files.
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if !(name.starts_with("shot-") && name.ends_with(".png")) {
+            continue;
+        }
         if let Ok(meta) = entry.metadata() {
-            if let Ok(created) = meta.created() {
-                if created < cutoff {
+            // mtime, NOT created(): NFS reports birthtime as epoch 0, so every
+            // freshly written screenshot looks ~56 years old and gets deleted the
+            // instant it lands. CLIPASTE_DIR points at an NFS mount today.
+            if let Ok(modified) = meta.modified() {
+                if modified < cutoff {
                     let _ = fs::remove_file(entry.path());
                 }
             }
@@ -209,6 +229,13 @@ COMPATIBILITY
   Windows: Windows Terminal, PowerShell, cmd.exe
   Remote:  Any Linux server via SSH
   WSL2:    Ubuntu, Debian, Fedora, Arch on WSL2
+
+ENVIRONMENT
+  CLIPASTE_DIR      Override the screenshot directory (used verbatim, no
+                    'clipaste' suffix). Cleanup only touches shot-*.png so
+                    other files in the directory are left alone.
+  XDG_CACHE_HOME    Used when CLIPASTE_DIR is unset; clipaste writes to
+                    $XDG_CACHE_HOME/clipaste.
 
 MORE INFO
   https://github.com/hqhq1025/clipaste"
